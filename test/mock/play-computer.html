@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock Chess.com — Play vs Computer</title>
+<!--
+  A small stand-in for Chess.com's board DOM, used by test/e2e.js.
+  It mirrors the parts the userscript reads:
+    <wc-chess-board class="board [flipped]">
+      <div class="highlight square-XY">        last move
+      <div class="piece wp square-XY">          pieces (X = file 1-8, Y = rank 1-8)
+  and an optional board.game API (getFEN / getPlayingAs). Query params:
+    ?api=0   hide the game API (forces DOM parsing)
+    ?flip=1  play as Black (board flipped, bot moves first)
+-->
+<style>
+  body { margin: 0; background: #312e2b; font-family: system-ui, sans-serif; color: #ddd; }
+  header { height: 48px; display: flex; align-items: center; padding: 0 16px; background: #262421; }
+  main { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+  .board-wrap { width: min(640px, calc(100vw - 32px)); }
+  wc-chess-board { display: block; position: relative; width: 100%; aspect-ratio: 1; user-select: none;
+    background: repeating-conic-gradient(#769656 0 25%, #eeeed2 0 50%) 0 0 / 25% 25%; touch-action: none; }
+  wc-chess-board .piece, wc-chess-board .highlight { position: absolute; left: 0; top: 0; width: 12.5%; height: 12.5%; }
+  wc-chess-board .piece { display: flex; align-items: center; justify-content: center; font-size: min(9vw, 60px); line-height: 1; cursor: pointer; }
+  wc-chess-board .piece.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+  wc-chess-board .piece.b { color: #111; }
+  wc-chess-board .highlight { background: rgba(255, 255, 51, .5); }
+  wc-chess-board .piece.selected { background: rgba(20, 85, 30, .5); }
+  .side { flex: 1; min-width: 200px; }
+</style>
+</head>
+<body>
+<header>chess.com (mock) — Play vs Computer</header>
+<main>
+  <div class="board-wrap"><wc-chess-board class="board" id="board-play-computer"></wc-chess-board></div>
+  <div class="side"><div id="moves"></div></div>
+</main>
+<script type="module">
+  import { Chess } from '/node_modules/chess.js/dist/esm/chess.js';
+  const params = new URLSearchParams(location.search);
+  const flipped = params.get('flip') === '1';
+  const useApi = params.get('api') !== '0';
+  const board = document.querySelector('wc-chess-board');
+  const css = document.createElement('style');
+  let rules = '';
+  for (let x = 1; x <= 8; x++) for (let y = 1; y <= 8; y++) {
+    const col = flipped ? 8 - x : x - 1;
+    const row = flipped ? y - 1 : 8 - y;
+    rules += `wc-chess-board .square-${x}${y}{transform:translate(${col * 100}%,${row * 100}%)}`;
+  }
+  css.textContent = rules;
+  document.head.appendChild(css);
+  if (flipped) board.classList.add('flipped');
+
+  const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+  const game = new Chess();
+  let last = null;
+  let selected = null;
+  const me = flipped ? 'b' : 'w';
+  const sqClass = (sq) => 'square-' + ('abcdefgh'.indexOf(sq[0]) + 1) + sq[1];
+
+  function render() {
+    // Mimic Chess.com: reuse elements where possible, only update classes.
+    board.querySelectorAll('.piece, .highlight').forEach((e) => e.remove());
+    if (last) for (const sq of [last.from, last.to]) {
+      const h = document.createElement('div');
+      h.className = 'highlight ' + sqClass(sq);
+      board.appendChild(h);
+    }
+    for (const row of game.board()) for (const p of row) {
+      if (!p) continue;
+      const d = document.createElement('div');
+      d.className = `piece ${p.color}${p.type} ${p.color} ${sqClass(p.square)}`;
+      d.dataset.square = p.square;
+      d.textContent = GLYPH[p.type];
+      board.appendChild(d);
+    }
+    document.getElementById('moves').textContent = game.history().join(' ');
+  }
+
+  function move(uci) {
+    const m = game.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' });
+    last = m;
+    render();
+    if (!game.isGameOver() && game.turn() !== me) setTimeout(botMove, Number(params.get('botDelay') || 300));
+    return m.san;
+  }
+
+  function botMove() {
+    if (game.turn() === me || game.isGameOver()) return;
+    const moves = game.moves({ verbose: true });
+    const m = moves[Math.floor(Math.random() * moves.length)];
+    move(m.from + m.to + (m.promotion || ''));
+  }
+
+  if (useApi) {
+    board.game = {
+      getFEN: () => game.fen(),
+      getPlayingAs: () => (flipped ? 2 : 1),
+      isGameOver: () => game.isGameOver(),
+    };
+  }
+
+  // Tap-to-move for manual testing.
+  board.addEventListener('click', (e) => {
+    const r = board.getBoundingClientRect();
+    let f = Math.floor((e.clientX - r.left) / (r.width / 8));
+    let rk = 7 - Math.floor((e.clientY - r.top) / (r.height / 8));
+    if (flipped) { f = 7 - f; rk = 7 - rk; }
+    const sq = 'abcdefgh'[f] + (rk + 1);
+    if (selected && game.moves({ square: selected, verbose: true }).some((m) => m.to === sq)) {
+      move(selected + sq); selected = null; return;
+    }
+    const p = game.get(sq);
+    selected = p && p.color === me ? sq : null;
+    board.querySelectorAll('.selected').forEach((x) => x.classList.remove('selected'));
+    if (selected) board.querySelector(`[data-square="${selected}"]`).classList.add('selected');
+  });
+
+  window.mock = { move, fen: () => game.fen(), load: (fen) => { game.load(fen); last = null; render(); } };
+  render();
+  if (flipped) setTimeout(botMove, 300);
+</script>
+</body>
+</html>
