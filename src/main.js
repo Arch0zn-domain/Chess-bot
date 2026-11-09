@@ -7,10 +7,10 @@
 
   // Only bot games and the analysis board. The overlay deliberately does not
   // run in games against people (that would break Chess.com's fair-play rules).
-  const supported = {
-  PATTERN: /^\/(play\/computer|analysis|game\/live|game\/daily|live|daily|play\/online)(\/|$|\?)/,
-  isSupportedPage: () => supported.PATTERN.test(location.pathname),
-};
+  const SUPPORTED = /^\/(play\/computer|analysis|game\/live|live|play\/online)(\/|$|\?)/;
+const LIVE_GAME = /^\/(game\/daily|daily)(\/|$|\?)/;
+
+const isSupportedPage = () => SUPPORTED.test(location.pathname) && !LIVE_GAME.test(location.pathname);
 
   const ARROW_COLORS = ['accent', '#58a6ff', '#f0883e', '#bc8cff', '#8b949e'];
 
